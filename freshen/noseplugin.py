@@ -256,7 +256,7 @@ class FreshenNosePlugin(Plugin):
             result.addError = instancemethod(_addError, result, result.__class__)
     
     def report(self, stream):
-        if self.undefined_steps is not None:
+        if self.undefined_steps:
             stream.write("======================================================================\n")
             stream.write("Tests with undefined steps\n")
             stream.write("----------------------------------------------------------------------\n")
