@@ -84,7 +84,7 @@ class FreshenTestCase(unittest.TestCase):
             try:
                 self.step_runner.run_step(step)
             except AssertionError as ae:
-                ae.freshen_step = step
+                self.error_step = step
                 raise
             except (UndefinedStepImpl, ExceptionWrapper):
                 raise
@@ -235,9 +235,9 @@ class FreshenNosePlugin(Plugin):
                     return (orig_ec, message, orig_tb)
                 else:
                     return (orig_ec, str(orig_ev), orig_tb)
-            elif ec is AssertionError and hasattr(ev, 'freshen_step'):
+            elif ec is AssertionError and hasattr(test.test, 'error_step'):
                 if self.error_steps:
-                    message = "%s\n\n%s" % (str(ev), self._formatSteps(test, ev.freshen_step))
+                    message = "%s\n\n%s" % (str(ev), self._formatSteps(test, test.test.error_step))
                     return (ec, message, tb)
     
     formatError = formatFailure
