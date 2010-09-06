@@ -4,6 +4,7 @@ import unittest
 import sys
 import os
 import logging
+import re
 from new import instancemethod
 
 from pyparsing import ParseException
@@ -17,7 +18,15 @@ from nose.util import isclass
 
 from freshen.core import TagMatcher, load_language, load_feature, StepsRunner
 from freshen.context import *
+from freshen.prettyprint import FreshenPrettyPrint
 from freshen.stepregistry import StepImplLoader, StepImplRegistry, UndefinedStepImpl
+
+try:
+    # use colorama for cross-platform colored text, if available
+    import colorama
+    colorama.init()
+except ImportError:
+    colorama = None
 
 log = logging.getLogger('nose.plugins.freshen')
 
@@ -116,12 +125,19 @@ class FreshenNosePlugin(Plugin):
             default='en',
             help='Change the language used when reading the feature files',
         )
-        parser.add_option('--list-undefined-steps', 
+        parser.add_option('--list-undefined', 
                           action="store_true",
-                          default=env.get('NOSE_FRESHEN_UNDEFINED')=='1',
-                          dest="undefined",
+                          default=env.get('NOSE_FRESHEN_LIST_UNDEFINED')=='1',
+                          dest="list_undefined",
                           help="Make a report of all undefined steps that "
-                               "freshen encounters when running scenarios.")
+                               "freshen encounters when running scenarios. "
+                               "[NOSE_FRESHEN_LIST_UNDEFINED]")
+        parser.add_option('--error-steps',
+                          action="store_true",
+                          default=env.get('NOSE_FRESHEN_ERROR_STEPS')=='1',
+                          dest='error_steps',
+                          help="Show the location of steps that fail/error. "
+                               "[NOSE_FRESHEN_ERROR_STEPS]")
 
     def configure(self, options, config):
         super(FreshenNosePlugin, self).configure(options, config)
@@ -132,9 +148,11 @@ class FreshenNosePlugin(Plugin):
         if not self.language:
             print >> sys.stderr, "Error: language '%s' not available" % options.language
             exit(1)
-        self.show_undefined = options.undefined
-        if self.show_undefined:
+        if options.list_undefined:
             self.undefined_steps = []
+        else:
+            self.undefined_steps = None
+        self.error_steps = options.error_steps
     
     def wantDirectory(self, dirname):
         if not os.path.exists(os.path.join(dirname, ".freshenignore")):
@@ -208,18 +226,22 @@ class FreshenNosePlugin(Plugin):
             ec, ev, tb = err
             if ec is ExceptionWrapper and isinstance(ev, Exception):
                 orig_ec, orig_ev, orig_tb = ev.e
-                message = "%s\n\n%s" % (str(orig_ev), self._formatSteps(test, ev.step))
-                return (orig_ec, message, orig_tb)
+                if self.error_steps:
+                    message = "%s\n\n%s" % (str(orig_ev), self._formatSteps(test, ev.step))
+                    return (orig_ec, message, orig_tb)
+                else:
+                    return (orig_ec, str(orig_ev), orig_tb)
             elif ec is AssertionError and hasattr(ev, 'freshen_step'):
-                message = "%s\n\n%s" % (str(ev), self._formatSteps(test, ev.freshen_step))
-                return (ec, message, tb)
+                if self.error_steps:
+                    message = "%s\n\n%s" % (str(ev), self._formatSteps(test, ev.freshen_step))
+                    return (ec, message, tb)
     
     formatError = formatFailure
     
     def prepareTestResult(self, result):
         # Patch the result handler with an addError method that saves
         # UndefinedStepImpl exceptions for reporting later.
-        if self.show_undefined:
+        if self.undefined_steps is not None:
             plugin = self
             def _addError(self, test, err):
                 ec,ev,tb = err
@@ -230,42 +252,36 @@ class FreshenNosePlugin(Plugin):
             result.addError = instancemethod(_addError, result, result.__class__)
     
     def report(self, stream):
-        if self.undefined_steps:
+        if self.undefined_steps is not None:
             stream.write("======================================================================\n")
-            stream.write("%sTests with undefined steps:%s\n" % (self.ansi_colour(1), self.ansi_colour()))
+            stream.write("Tests with undefined steps\n")
             stream.write("----------------------------------------------------------------------\n")
-            
             for test, ec, ev, tb in self.undefined_steps:
                 stream.write(self._formatSteps(test, ev.step, False)+"\n\n")
-
+            stream.write("You can implement step definitions for the missing steps with these snippets:\n\n")
+            uniq_steps = set(s[2].step for s in self.undefined_steps)
+            for step in uniq_steps:
+                stream.write('@%s(r"^%s$")\n' % (self.language.words(step.step_type)[0],
+                                                 step.match))
+                stream.write('def %s_%s():\n' % (step.step_type,
+                                                 re.sub('[^\w]', '_', step.match).lower()))
+                stream.write('    # code here\n\n')
+    
     def _formatSteps(self, test, failed_step, failure=True):
-        steps = []
+        ret = []
+        ret.append(FreshenPrettyPrint.feature(test.test.feature))
+        ret.append(FreshenPrettyPrint.scenario(test.test.scenario))
         found = False
-        prev_step_type = None
-        for step in test.test.scenario.iter_steps():
+        for step in test.test.scenario.iter_steps():            
             if step == failed_step:
                 found = True
-                colour = failure and 31 or 33
+                if failure:
+                    ret.append(FreshenPrettyPrint.step_failed(step))
+                else:
+                    ret.append(FreshenPrettyPrint.step_undefined(step))
             elif found:
-                colour = 30
+                ret.append(FreshenPrettyPrint.step_notrun(step))
             else:
-                colour = 32
-            data = (self.ansi_colour(1, colour),
-                    prev_step_type == step.step_type and "and" or step.step_type,
-                    self.ansi_colour(0, colour),
-                    step.match,
-                    self.ansi_colour(1, 37),
-                    step.source_location(),
-                    self.ansi_colour())
-            steps.append("  %s%s %s%s %s%s%s" % data)
-            prev_step_type = step.step_type
-        return "%s%s: %s%s\n%s" % (self.ansi_colour(1,32), 
-                               test.test.feature.name, 
-                               test.test.scenario.name,
-                               self.ansi_colour(),
-                               "\n".join(steps))
+                ret.append(FreshenPrettyPrint.step_passed(step))
+        return "\n".join(ret)
     
-    def ansi_colour(self,*args):
-        if args == []:
-            args = [0]
-        return "\033[%sm" % (';'.join([str(i) for i in args]))
