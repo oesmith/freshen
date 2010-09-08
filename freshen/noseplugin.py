@@ -60,6 +60,7 @@ class FreshenTestCase(unittest.TestCase):
     required_sane_plugins = ["django", "http"]    
     django_plugin_started = False
     http_plugin_started = False
+    last_step = None
     
     test_type = "http"
 
@@ -82,17 +83,16 @@ class FreshenTestCase(unittest.TestCase):
     def runTest(self):
         for step in self.scenario.iter_steps():
             try:
+                self.last_step = step
                 self.step_runner.run_step(step)
-            except AssertionError as ae:
-                self.error_step = step
-                raise
-            except (UndefinedStepImpl, ExceptionWrapper):
+            except (AssertionError, UndefinedStepImpl, ExceptionWrapper):
                 raise
             except:
                 raise ExceptionWrapper(sys.exc_info(), step)
             
             for hook_impl in reversed(self.step_registry.get_hooks('after_step', self.scenario.get_tags())):
                 hook_impl.run(self.scenario)
+        self.last_step = None
     
     def tearDown(self):
         for hook_impl in reversed(self.step_registry.get_hooks('after', self.scenario.get_tags())):
@@ -235,9 +235,9 @@ class FreshenNosePlugin(Plugin):
                     return (orig_ec, message, orig_tb)
                 else:
                     return (orig_ec, str(orig_ev), orig_tb)
-            elif ec is AssertionError and hasattr(test.test, 'error_step'):
+            elif hasattr(test.test, 'last_step'):
                 if self.error_steps:
-                    message = "%s\n\n%s" % (str(ev), self._formatSteps(test, test.test.error_step))
+                    message = "%s\n\n%s" % (str(ev), self._formatSteps(test, test.test.last_step))
                     return (ec, message, tb)
     
     formatError = formatFailure
