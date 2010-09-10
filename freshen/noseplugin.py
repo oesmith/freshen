@@ -234,7 +234,7 @@ class FreshenNosePlugin(Plugin):
                     message = "%s\n\n%s" % (str(orig_ev), self._formatSteps(test, ev.step))
                     return (orig_ec, message, orig_tb)
                 else:
-                    return (orig_ec, str(orig_ev), orig_tb)
+                    return (orig_ec, str(orig_ev) + '\n\n>> in "%s" # %s' % (ev.step.match, ev.step.source_location()), orig_tb)
             elif not ec is UndefinedStepImpl and hasattr(test.test, 'last_step'):
                 if self.error_steps:
                     message = "%s\n\n%s" % (str(ev), self._formatSteps(test, test.test.last_step))
